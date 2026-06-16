@@ -240,6 +240,44 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
 
 .tempo-label { font-size: .82rem; color: var(--text-dim); }
 
+/* ── Chord palette ────────────────────────────────────────────────────── */
+#palette-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.palette-degree {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .8rem;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  cursor: pointer;
+  transition: border-color .12s;
+  user-select: none;
+}
+.palette-degree:hover { border-color: var(--accent); }
+.palette-degree .deg-num {
+  color: var(--text-dim);
+  font-size: .7rem;
+  width: 14px;
+  flex-shrink: 0;
+  font-family: serif;
+  font-style: italic;
+}
+.palette-degree .deg-sym { font-weight: 600; flex: 1; }
+.palette-degree .deg-type { font-size: .7rem; color: var(--text-dim); }
+.palette-section-hdr {
+  font-size: .68rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+
 /* ── Circle of fifths SVG ─────────────────────────────────────────────── */
 #cof-svg {
   overflow: visible;
@@ -368,6 +406,13 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
         <option value="2" selected>Half note</option>
         <option value="4">Whole note</option>
       </select>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Chord Palette</div>
+      <div id="palette-wrap">
+        <div style="color:var(--text-dim);font-size:.8rem">Select a key to load chords.</div>
+      </div>
     </div>
 
     <div class="ct-legend">
@@ -840,9 +885,10 @@ document.getElementById('sel-mode').addEventListener('change', e => {
   document.getElementById('key-display').textContent =
     NOTE_NAMES[state.root] + ' ' + e.target.options[e.target.selectedIndex].text.split(' ')[0];
   renderCircle();
+  renderChordPalette();
 });
 
-document.getElementById('sel-vocab').addEventListener('change', e => { state.vocab = e.target.value; });
+document.getElementById('sel-vocab').addEventListener('change', e => { state.vocab = e.target.value; renderChordPalette(); });
 document.getElementById('sel-ct').addEventListener('change',   e => { state.ctMin = +e.target.value; renderCircle(); renderPanel(); });
 
 document.getElementById('sl-length').addEventListener('input', e => {
@@ -860,6 +906,280 @@ document.getElementById('sl-bpm').addEventListener('input',   e => { state.bpm =
 
 // ── Initial render ──────────────────────────────────────────
 renderCircle();
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 2 — SCALE DEFINITIONS & CHORD POOL GENERATION
+// ════════════════════════════════════════════════════════════
+
+const SCALE_INTERVALS = {
+  major:        [0,2,4,5,7,9,11],
+  minor:        [0,2,3,5,7,8,10],
+  dorian:       [0,2,3,5,7,9,10],
+  phrygian:     [0,1,3,5,7,8,10],
+  lydian:       [0,2,4,6,7,9,11],
+  mixolydian:   [0,2,4,5,7,9,10],
+  melodic_minor:[0,2,3,5,7,9,11],
+  lydian_dom:   [0,2,4,6,7,9,10],
+  altered:      [0,1,3,4,6,8,10],
+  wholetone:    [0,2,4,6,8,10],
+  octatonic:    [0,1,3,4,6,7,9,10],
+  chromatic:    [0,1,2,3,4,5,6,7,8,9,10,11],
+};
+
+// Diatonic chord table per mode: [triad_type, 7th_type, fn_label]
+// Indexed by scale degree 0-6 (or 0-7 for octatonic)
+const DIATONIC = {
+  major:        [['maj','maj7','T'],['min','min7','PD'],['min','min7','T'],
+                 ['maj','maj7','PD'],['maj','dom7','D'],['min','min7','T'],['dim','hdim7','D']],
+  minor:        [['min','min7','T'],['dim','hdim7','PD'],['maj','maj7','T'],
+                 ['min','min7','PD'],['min','dom7','D'],['maj','maj7','PD'],['maj','dom7','D']],
+  dorian:       [['min','min7','T'],['min','min7','PD'],['maj','maj7','X'],
+                 ['maj','dom7','D'],['min','min7','T'],['dim','hdim7','PD'],['maj','maj7','X']],
+  phrygian:     [['min','min7','T'],['maj','maj7','PD'],['maj','dom7','D'],
+                 ['min','min7','PD'],['dim','hdim7','D'],['maj','maj7','X'],['min','min7','T']],
+  lydian:       [['maj','maj7','T'],['maj','dom7','X'],['min','min7','T'],
+                 ['dim','hdim7','D'],['maj','maj7','T'],['min','min7','PD'],['min','min7','PD']],
+  mixolydian:   [['maj','dom7','T'],['min','min7','PD'],['dim','hdim7','D'],
+                 ['maj','maj7','PD'],['min','min7','T'],['min','min7','PD'],['maj','maj7','X']],
+  melodic_minor:[['min','minmaj7','T'],['min','min7','PD'],['aug','augmaj7','X'],
+                 ['maj','dom7','D'],['maj','dom7','D'],['dim','hdim7','PD'],['dim','hdim7','D']],
+  lydian_dom:   [['maj','dom7','T'],['maj','dom7','D'],['min','min7','PD'],
+                 ['dim','hdim7','D'],['min','min7','PD'],['min','min7','T'],['dim','hdim7','D']],
+  altered:      [['dim','hdim7','T'],['min','min7','PD'],['maj','dom7','D'],
+                 ['maj','maj7','X'],['maj','dom7','D'],['min','min7','PD'],['min','min7','X']],
+  // Symmetric scales: use repeating patterns
+  wholetone:    [['aug','dom7','X'],['aug','dom7','X'],['aug','dom7','X'],
+                 ['aug','dom7','X'],['aug','dom7','X'],['aug','dom7','X']],
+  octatonic:    [['dim','dim7','D'],['maj','dom7','D'],['dim','dim7','D'],['maj','dom7','D'],
+                 ['dim','dim7','D'],['maj','dom7','D'],['dim','dim7','D'],['maj','dom7','D']],
+  chromatic:    [], // handled by full-chromatic pool below
+};
+
+const ROMAN = ['I','II','III','IV','V','VI','VII','VIII'];
+
+/** Returns all pitch classes in a scale as an array (0-11) */
+function getScalePCs(root, mode) {
+  const intervals = SCALE_INTERVALS[mode] ?? SCALE_INTERVALS.major;
+  return intervals.map(i => (root + i) % 12);
+}
+
+// ── Quartal chord builder ──────────────────────────────────
+// Stacks 4ths from the scale — uses scale PCs only for a "modal" quality
+function buildQuartalChords(root, mode) {
+  const scalePCs = getScalePCs(root, mode);
+  const chords = [];
+  scalePCs.forEach((pc, i) => {
+    // Stack 3 4ths from this scale degree
+    const voices = [pc];
+    for (let step = 1; step <= 3; step++) {
+      // Walk up the scale by 3 half-steps × step (perfect 4th = 5 semitones)
+      let next = voices[voices.length - 1];
+      // Find the pitch ~5 semitones above that also sits in the scale
+      const target = (next + 5) % 12;
+      const inScale = scalePCs.includes(target);
+      const alt     = scalePCs.includes((next + 6) % 12); // tritone sub (Lydian 4th)
+      if (inScale) voices.push(target);
+      else if (alt) voices.push((next + 6) % 12);
+      else         voices.push(target); // force it
+    }
+    const type = voices[3] === (pc + 16) % 12 ? 'quartalL' : 'quartal4';
+    chords.push(buildChord(pc, type, null, 'X'));
+  });
+  return chords;
+}
+
+// ── Quintal chord builder ──────────────────────────────────
+function buildQuintalChords(root, mode) {
+  const scalePCs = getScalePCs(root, mode);
+  return scalePCs.map(pc => buildChord(pc, 'quintal4', null, 'X'));
+}
+
+// ── Extended (9th/11th/13th) chord builder ─────────────────
+function buildExtendedChords(root, mode) {
+  const diatonic = DIATONIC[mode] ?? DIATONIC.major;
+  const scalePCs = getScalePCs(root, mode);
+  return diatonic.map(([, , fn], i) => {
+    const chRoot = scalePCs[i];
+    // Assign best extended type: dominant degrees get dom9/dom13, tonic get maj9/min9
+    const base7 = diatonic[i][1];
+    const extType = base7 === 'dom7'  ? (Math.random() > .5 ? 'dom9' : 'dom13')
+                  : base7 === 'maj7'  ? 'maj9'
+                  : base7 === 'min7'  ? 'min9'
+                  : base7 === 'minmaj7' ? 'min9'
+                  : base7;
+    return buildChord(chRoot, extType, null, fn);
+  });
+}
+
+/**
+ * Generate the full chord pool for the current key, mode, and vocabulary.
+ * Returns an array of Chord objects.
+ */
+function generateChordPool(root, mode, vocab) {
+  const diatonic = DIATONIC[mode];
+  const scalePCs = getScalePCs(root, mode);
+  const pool = [];
+
+  if (vocab === 'tonal' || vocab === 'mixed' || vocab === 'extended') {
+    if (diatonic && diatonic.length) {
+      diatonic.forEach(([triadType, seventhType, fn], i) => {
+        const chRoot = scalePCs[i];
+        // Always include the triad
+        pool.push(buildChord(chRoot, triadType, null, fn));
+        // Include 7th chord for extended/mixed
+        if (vocab !== 'tonal') {
+          pool.push(buildChord(chRoot, seventhType, null, fn));
+        } else {
+          // Tonal: add 7th on dominant
+          if (fn === 'D') pool.push(buildChord(chRoot, seventhType, null, fn));
+        }
+      });
+    } else if (mode === 'chromatic') {
+      // All 12 roots, major + minor triads
+      for (let pc = 0; pc < 12; pc++) {
+        pool.push(buildChord(pc, 'maj', null, 'X'));
+        pool.push(buildChord(pc, 'min', null, 'X'));
+        pool.push(buildChord(pc, 'dom7', null, 'D'));
+      }
+    }
+    if (vocab === 'extended') {
+      pool.push(...buildExtendedChords(root, mode));
+    }
+  }
+
+  if (vocab === 'quartal' || vocab === 'mixed') {
+    pool.push(...buildQuartalChords(root, mode));
+  }
+
+  if (vocab === 'quintal' || vocab === 'mixed') {
+    pool.push(...buildQuintalChords(root, mode));
+  }
+
+  // Deduplicate by root+type
+  const seen = new Set();
+  return pool.filter(ch => {
+    const key = `${ch.root}:${ch.type}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 2 — COMMON-TONE SEARCH ENGINE
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Given a source chord and a candidate pool, return candidates sorted by
+ * descending common-tone count, filtered to minCt minimum.
+ * Fixed-bass chords are excluded unless bass matches.
+ */
+function candidatesForNextChord(sourceChord, pool, minCt, fixedBass, bassNote) {
+  return pool
+    .filter(ch => !(ch.root === sourceChord.root && ch.type === sourceChord.type))
+    .map(ch => {
+      const ct = commonTones(sourceChord, ch);
+      // If fixed bass, apply bass note to the candidate
+      const candidate = fixedBass
+        ? { ...ch, bass: bassNote, pitchClasses: new Set([...ch.pitchClasses, bassNote]) }
+        : ch;
+      return { chord: candidate, ct };
+    })
+    .filter(({ ct }) => ct >= minCt)
+    .sort((a, b) => b.ct - a.ct || a.chord.tension - b.chord.tension);
+}
+
+/**
+ * For a given chord, return all chords in the pool grouped by CT count.
+ * Useful for the "browse common tones" panel.
+ */
+function commonToneMap(sourceChord, pool) {
+  const groups = {};
+  pool.forEach(ch => {
+    if (ch.root === sourceChord.root && ch.type === sourceChord.type) return;
+    const ct = commonTones(sourceChord, ch);
+    if (!groups[ct]) groups[ct] = [];
+    groups[ct].push(ch);
+  });
+  return groups; // { 0: [...], 1: [...], 2: [...], 3: [...] }
+}
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 2 — CHORD PALETTE RENDERER
+// ════════════════════════════════════════════════════════════
+
+// Cache the pool so Module 3 can reuse it
+state.chordPool = [];
+
+function renderChordPalette() {
+  const root  = state.root;
+  const mode  = state.mode;
+  const vocab = state.vocab;
+  const pool  = generateChordPool(root, mode, vocab);
+  state.chordPool = pool;
+
+  const wrap = document.getElementById('palette-wrap');
+  wrap.innerHTML = '';
+
+  if (!pool.length) {
+    wrap.innerHTML = '<div style="color:var(--text-dim);font-size:.8rem">No chords for this setting.</div>';
+    return;
+  }
+
+  // Group by function for display
+  const groups = { T: [], PD: [], D: [], X: [] };
+  pool.forEach(ch => groups[ch.fn]?.push(ch));
+
+  const fnLabels = { T: 'Tonic', PD: 'Pre-Dominant', D: 'Dominant', X: 'Modal / Other' };
+
+  for (const fn of ['T','PD','D','X']) {
+    if (!groups[fn].length) continue;
+    const hdr = document.createElement('div');
+    hdr.className = 'palette-section-hdr';
+    hdr.style.color = fnColour(fn);
+    hdr.textContent = fnLabels[fn];
+    wrap.appendChild(hdr);
+
+    groups[fn].forEach(ch => {
+      const row = document.createElement('div');
+      row.className = 'palette-degree';
+      row.style.borderLeftColor = fnColour(fn);
+      row.style.borderLeftWidth = '3px';
+
+      const sym = document.createElement('div');
+      sym.className = 'deg-sym';
+      sym.textContent = ch.symbol;
+
+      const type = document.createElement('div');
+      type.className = 'deg-type';
+      type.textContent = ch.type.replace('quartal4','4th').replace('quartalL','4th♯').replace('quintal4','5th');
+
+      row.appendChild(sym);
+      row.appendChild(type);
+      wrap.appendChild(row);
+
+      // Click to add chord to progression
+      row.onclick = () => addChordToProgression(ch);
+    });
+  }
+}
+
+function addChordToProgression(ch) {
+  const chord = state.fixedBass
+    ? { ...ch, bass: state.bassNote }
+    : ch;
+  state.progression.push(chord);
+  state.activeIdx = state.progression.length - 1;
+  renderCircle();
+  renderPanel();
+  document.getElementById('btn-play').disabled = state.progression.length < 1;
+}
+
+// Trigger on key change too
+document.getElementById('sel-root').addEventListener('change', () => renderChordPalette());
+
+// Initial palette load
+renderChordPalette();
 </script>
 </body>
 </html>
