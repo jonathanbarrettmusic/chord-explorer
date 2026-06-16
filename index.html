@@ -539,6 +539,7 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
     <button class="btn" onclick="clearProgression()">Clear</button>
     <button class="btn" id="btn-copy" onclick="copyProgression()" title="Copy chord symbols">Copy</button>
     <button class="btn" id="btn-analysis" onclick="copyAnalysis()" title="Copy Roman numeral analysis">Analysis</button>
+    <button class="btn" id="btn-midi" onclick="exportMIDI()" title="Download MIDI file">MIDI ↓</button>
     <div style="flex:1"></div>
     <span class="tempo-label">BPM</span>
     <input type="range" id="sl-bpm" min="40" max="160" value="80"
@@ -1776,6 +1777,94 @@ document.getElementById('sel-root').addEventListener('change', () => {
   renderChordPalette();
   renderChordInfo(state.progression[state.activeIdx] ?? null);
 });
+
+// ════════════════════════════════════════════════════════════
+//  MIDI EXPORT
+// ════════════════════════════════════════════════════════════
+
+/** Convert PC_SHARP + octave string (e.g. 'C#4') to MIDI note number */
+function noteNameToMidi(name) {
+  const noteStr = name.slice(0, name.length - 1);
+  const oct     = parseInt(name.slice(-1), 10);
+  const pc      = PC_SHARP.indexOf(noteStr);
+  return (oct + 1) * 12 + (pc >= 0 ? pc : 0);
+}
+
+/** MIDI variable-length quantity encoding */
+function varLen(n) {
+  if (n === 0) return [0x00];
+  const bytes = [];
+  while (n > 0) { bytes.unshift(n & 0x7F); n >>= 7; }
+  for (let i = 0; i < bytes.length - 1; i++) bytes[i] |= 0x80;
+  return bytes;
+}
+
+function exportMIDI() {
+  if (!state.progression.length) { alert('Generate a progression first.'); return; }
+
+  const TPQN        = 480;
+  const microsPerBt = Math.round(60_000_000 / state.bpm);
+  const ticksPerCh  = Math.round(state.duration * TPQN);
+  const noteTicks   = Math.round(ticksPerCh * 0.88);
+  const gapTicks    = ticksPerCh - noteTicks;
+
+  const t = [];
+
+  // Tempo meta (δ=0)
+  t.push(0x00, 0xFF, 0x51, 0x03,
+    (microsPerBt >> 16) & 0xFF, (microsPerBt >> 8) & 0xFF, microsPerBt & 0xFF);
+
+  // Time sig 4/4 meta (δ=0)
+  t.push(0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08);
+
+  // Program changes: ch1 = Grand Piano (0), ch2 = Acoustic Bass (32)
+  t.push(0x00, 0xC0, 0x00);
+  t.push(0x00, 0xC1, 0x20);
+
+  state.progression.forEach((chord, ci) => {
+    const upperMidi = voiceChord(chord).map(noteNameToMidi);
+    const bassOct   = chord.bass >= 5 ? 1 : 2;
+    const bassMidi  = chord.bass + (bassOct + 1) * 12;
+    const onDelta   = varLen(ci === 0 ? 0 : gapTicks);
+
+    // Note On — bass on ch2 (0x91), upper on ch1 (0x90)
+    t.push(...onDelta, 0x91, bassMidi, 80);
+    upperMidi.forEach(n => t.push(0x00, 0x90, n, 70));
+
+    // Note Off — after noteTicks
+    t.push(...varLen(noteTicks), 0x81, bassMidi, 0);
+    upperMidi.forEach(n => t.push(0x00, 0x80, n, 0));
+  });
+
+  // End of track
+  t.push(...varLen(gapTicks), 0xFF, 0x2F, 0x00);
+
+  // Assemble file: MThd + MTrk
+  const header = [
+    0x4D,0x54,0x68,0x64, 0x00,0x00,0x00,0x06, // MThd, len=6
+    0x00,0x00,                                  // format 0
+    0x00,0x01,                                  // 1 track
+    (TPQN >> 8) & 0xFF, TPQN & 0xFF,
+  ];
+  const trkHdr = [
+    0x4D,0x54,0x72,0x6B,                        // MTrk
+    (t.length >> 24) & 0xFF, (t.length >> 16) & 0xFF,
+    (t.length >>  8) & 0xFF,  t.length        & 0xFF,
+  ];
+
+  const midi     = new Uint8Array([...header, ...trkHdr, ...t]);
+  const rootName = NOTE_NAMES[state.root].replace('♯','s').replace('♭','b');
+  const blob     = new Blob([midi], { type: 'audio/midi' });
+  const url      = URL.createObjectURL(blob);
+  const a        = document.createElement('a');
+  a.href = url; a.download = `${rootName}_${state.mode}_progression.mid`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+
+  const btn = document.getElementById('btn-midi');
+  btn.textContent = '✓ Saved';
+  setTimeout(() => { btn.textContent = 'MIDI ↓'; }, 1800);
+}
 </script>
 </body>
 </html>
