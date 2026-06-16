@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chord Explorer</title>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
 <style>
 /* ── Reset & base ─────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -278,6 +279,8 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
   margin-top: 6px;
 }
 
+@keyframes pulse { from { opacity: 1; } to { opacity: .25; } }
+
 /* ── Circle of fifths SVG ─────────────────────────────────────────────── */
 #cof-svg {
   overflow: visible;
@@ -329,6 +332,9 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
     <h1>Chord Explorer</h1>
     <span class="tag">Harmony Visualiser</span>
     <span class="tag" id="key-display">C major</span>
+    <span id="play-indicator" style="display:none;margin-left:auto;
+      width:9px;height:9px;border-radius:50%;background:#f85149;
+      animation:pulse 0.8s ease-in-out infinite alternate"></span>
   </header>
 
   <!-- ── SIDEBAR ── -->
@@ -938,10 +944,7 @@ function clearProgression() {
   document.getElementById('btn-play').disabled = true;
 }
 
-function playProgression() {
-  // Stub — Module 4 will implement Tone.js playback
-  alert('Playback coming in Module 4.');
-}
+// playProgression() implemented in Module 4 below
 
 function toggleBass() {
   const tog = document.getElementById('tog-bass');
@@ -1392,6 +1395,123 @@ document.getElementById('sel-root').addEventListener('change', () => renderChord
 
 // Initial palette load
 renderChordPalette();
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 4 — TONE.JS PLAYBACK
+// ════════════════════════════════════════════════════════════
+
+// Tone.js uses sharps; use this for note name construction
+const PC_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+let upperSynth = null;
+let bassSynth  = null;
+
+function initSynths() {
+  if (upperSynth) return;
+
+  // Soft piano-like upper voices
+  upperSynth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope:   { attack: 0.06, decay: 0.4, sustain: 0.55, release: 1.2 },
+  }).toDestination();
+  upperSynth.volume.value = -10;
+
+  // Warmer bass voice
+  bassSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope:   { attack: 0.08, decay: 0.5, sustain: 0.65, release: 1.4 },
+    filterEnvelope: undefined,
+  }).toDestination();
+  bassSynth.volume.value = -6;
+}
+
+/**
+ * Voice a chord in close position starting at octave 4.
+ * Returns array of Tone.js note strings e.g. ['C4','E4','G4'].
+ */
+function voiceChord(chord) {
+  const root = chord.root;
+
+  // Sort pitch classes ascending from root (wrap-around)
+  const sorted = [...chord.pitchClasses]
+    .map(pc => ({ pc, diff: (pc - root + 12) % 12 }))
+    .sort((a, b) => a.diff - b.diff)
+    .map(x => x.pc);
+
+  let oct  = 4;
+  let prev = -1;
+
+  return sorted.map((pc, i) => {
+    if (i > 0 && pc <= prev) oct = Math.min(oct + 1, 6);
+    prev = pc;
+    return PC_SHARP[pc] + oct;
+  });
+}
+
+// Playback state
+state.playing    = false;
+state.playTimers = [];
+
+function stopPlayback() {
+  state.playing = false;
+  state.playTimers.forEach(clearTimeout);
+  state.playTimers = [];
+
+  // Release all active notes
+  if (upperSynth) upperSynth.releaseAll();
+  if (bassSynth)  bassSynth.triggerRelease();
+
+  document.getElementById('btn-play').textContent = '▶ Play';
+  document.getElementById('play-indicator').style.display = 'none';
+}
+
+async function playProgression() {
+  if (state.playing) { stopPlayback(); return; }
+  if (!state.progression.length) return;
+
+  // Unlock audio context on first user gesture
+  await Tone.start();
+  initSynths();
+
+  state.playing    = true;
+  state.playTimers = [];
+
+  const prog        = state.progression;
+  const secPerBeat  = 60 / state.bpm;
+  const chordDurSec = state.duration * secPerBeat;   // state.duration is in quarter-note beats
+  const gapFactor   = 0.88;                           // slight gap between chords
+  const startTime   = Tone.now() + 0.08;
+
+  document.getElementById('btn-play').textContent = '⏹ Stop';
+  document.getElementById('play-indicator').style.display = '';
+
+  prog.forEach((chord, i) => {
+    const t       = startTime + i * chordDurSec;
+    const noteDur = chordDurSec * gapFactor;
+
+    // ── Upper voices ───────────────────────────────────────
+    const notes = voiceChord(chord);
+    upperSynth.triggerAttackRelease(notes, noteDur, t);
+
+    // ── Bass voice ─────────────────────────────────────────
+    const bassOct  = chord.bass >= 5 ? 1 : 2;   // keep bass low
+    const bassNote = PC_SHARP[chord.bass] + bassOct;
+    bassSynth.triggerAttackRelease(bassNote, noteDur, t);
+
+    // ── Visual sync (setTimeout approximation) ─────────────
+    const delayMs = Math.max(0, (t - Tone.now()) * 1000);
+    state.playTimers.push(setTimeout(() => {
+      if (!state.playing) return;
+      state.activeIdx = i;
+      renderCircle();
+      renderPanel();
+    }, delayMs));
+  });
+
+  // Auto-stop after last chord finishes
+  const totalMs = (startTime - Tone.now() + prog.length * chordDurSec) * 1000 + 200;
+  state.playTimers.push(setTimeout(stopPlayback, totalMs));
+}
 </script>
 </body>
 </html>
