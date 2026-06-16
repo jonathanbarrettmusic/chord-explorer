@@ -292,6 +292,23 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
 .cof-arc { fill: none; stroke-width: 2; opacity: .6; pointer-events: none; }
 .cof-ct-dot { pointer-events: none; }
 
+/* ── CT browser ───────────────────────────────────────────────────────── */
+#ct-browser { display: flex; flex-direction: column; gap: 4px; }
+.ct-group-hdr {
+  font-size: .68rem; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--accent); margin-top: 6px;
+}
+.ct-candidate {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: .82rem;
+  transition: border-color .12s;
+}
+.ct-candidate:hover { border-color: var(--accent); }
+.ct-candidate .fn-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ct-candidate .ct-sym { font-weight: 600; flex: 1; }
+.ct-candidate .ct-num { font-size: .7rem; color: var(--text-dim); }
+
 /* common-tone bar legend */
 .ct-legend {
   display: flex;
@@ -399,6 +416,20 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
     </div>
 
     <div class="ctrl-group">
+      <div class="ctrl-label">Progression Style</div>
+      <select id="sel-style">
+        <option value="auto">Auto (matches vocabulary)</option>
+        <option value="classic">Classic (T–PD–D–T)</option>
+        <option value="jazz">Jazz (ii–V–I)</option>
+        <option value="modal">Modal Drift</option>
+        <option value="impressionist">Impressionist</option>
+        <option value="descending">Descending Bass</option>
+        <option value="cycle">Cycle of Fifths</option>
+        <option value="pedal">Pedal / Static</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
       <div class="ctrl-label">Chord Duration</div>
       <select id="sel-dur">
         <option value="0.5">Eighth note</option>
@@ -437,9 +468,11 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
         Press Generate to build a progression.
       </div>
     </div>
-    <div style="margin-top:auto">
-      <div class="panel-title" style="margin-bottom:6px">Common Tones</div>
-      <div id="ct-info" style="font-size:.82rem;color:var(--text-dim)">—</div>
+    <div style="margin-top:auto;border-top:1px solid var(--border);padding-top:10px">
+      <div class="panel-title" style="margin-bottom:4px">CT Summary</div>
+      <div id="ct-info" style="font-size:.78rem;color:var(--text-dim);margin-bottom:10px">—</div>
+      <div class="panel-title" style="margin-bottom:6px">Next Chord Candidates</div>
+      <div id="ct-browser"><div style="color:var(--text-dim);font-size:.8rem">Select a chord above.</div></div>
     </div>
   </div>
 
@@ -774,17 +807,122 @@ function onNodeClick(pc) {
   renderPanel();
 }
 
+// ════════════════════════════════════════════════════════════
+//  MODULE 3 — PROGRESSION GENERATOR
+// ════════════════════════════════════════════════════════════
+
+// Function-sequence templates — extended with cycling to fill any length
+const SEED_PATTERNS = {
+  classic:      ['T','PD','D','T'],
+  jazz:         ['PD','D','T'],
+  modal:        ['T','X','X','T','X'],
+  impressionist:['T','X','T','X','T'],
+  descending:   ['T','D','PD','T'],
+  cycle:        ['X','D','T','PD','D','T'],
+  pedal:        ['T','X','X','X','T'],
+  auto:         null, // derived from vocab
+};
+
+// Function-to-function transition weights (from → to)
+const FN_WEIGHTS = {
+  'T-PD':3.5,'T-D':1.5,'T-T':0.6,'T-X':2.0,
+  'PD-D':5.0,'PD-PD':0.8,'PD-T':0.4,'PD-X':1.2,
+  'D-T': 6.0,'D-D': 0.4,'D-PD':0.3,'D-X':0.6,
+  'X-T': 2.5,'X-PD':2.0,'X-D': 2.0,'X-X':3.5,
+};
+
+function fnWeight(from, to) {
+  return FN_WEIGHTS[`${from}-${to}`] ?? 1;
+}
+
+/** Weighted random pick from candidatesForNextChord results */
+function weightedPick(candidates, fromFn) {
+  const weighted = candidates.map(({ chord, ct }) => ({
+    chord,
+    w: fnWeight(fromFn, chord.fn) * (1 + ct) * (1 - chord.tension * 0.15),
+  }));
+  const total = weighted.reduce((s, c) => s + c.w, 0);
+  let r = Math.random() * total;
+  for (const { chord, w } of weighted) {
+    r -= w;
+    if (r <= 0) return chord;
+  }
+  return weighted[weighted.length - 1].chord;
+}
+
+/** Apply fixed bass to a chord (non-destructive clone) */
+function applyBass(chord) {
+  if (!state.fixedBass) return chord;
+  const pcs = new Set([...chord.pitchClasses, state.bassNote]);
+  return { ...chord, bass: state.bassNote, pitchClasses: pcs };
+}
+
+/** Pick function sequence from style setting and vocab */
+function getFnSequence(length) {
+  let style = document.getElementById('sel-style').value;
+
+  // Auto-derive from vocabulary
+  if (style === 'auto') {
+    const v = state.vocab;
+    style = v === 'tonal'   ? 'classic'
+          : v === 'extended'? 'jazz'
+          : v === 'quartal' || v === 'quintal' ? 'modal'
+          : 'impressionist';
+  }
+
+  const base = SEED_PATTERNS[style] ?? SEED_PATTERNS.classic;
+  // Cycle the pattern to fill requested length, always end on tonic
+  const seq = [];
+  for (let i = 0; i < length; i++) seq.push(base[i % base.length]);
+  if (length > 1) seq[length - 1] = 'T'; // cadential resolution
+  return seq;
+}
+
+/** Main progression generator */
 function generate() {
-  // Stub — Module 3 will implement this
-  // For now, build a sample I–IV–V–I in the chosen key for testing
-  const r = state.root;
-  state.progression = [
-    buildChord(r,          'maj',  state.fixedBass ? state.bassNote : null, 'T'),
-    buildChord((r + 5) % 12, 'maj',  state.fixedBass ? state.bassNote : null, 'PD'),
-    buildChord((r + 7) % 12, 'dom7', state.fixedBass ? state.bassNote : null, 'D'),
-    buildChord(r,          'maj',  state.fixedBass ? state.bassNote : null, 'T'),
-  ];
-  state.activeIdx = 0;
+  const pool = state.chordPool.length ? state.chordPool : generateChordPool(state.root, state.mode, state.vocab);
+  state.chordPool = pool;
+  if (!pool.length) return;
+
+  const fnSeq  = getFnSequence(state.length);
+  const result = [];
+
+  for (let i = 0; i < fnSeq.length; i++) {
+    const targetFn = fnSeq[i];
+
+    if (i === 0) {
+      // Start on tonic — prefer root-position tonic chord
+      const tonic = pool.find(ch => ch.fn === 'T' && ch.root === state.root)
+                 ?? pool.find(ch => ch.fn === 'T')
+                 ?? pool[0];
+      result.push(applyBass(tonic));
+      continue;
+    }
+
+    const prev = result[result.length - 1];
+
+    // CT-filtered candidates targeting desired function
+    let candidates = candidatesForNextChord(prev, pool, state.ctMin, state.fixedBass, state.bassNote)
+      .filter(({ chord }) => chord.fn === targetFn);
+
+    // Widen: drop function filter but keep CT constraint
+    if (!candidates.length) {
+      candidates = candidatesForNextChord(prev, pool, state.ctMin, state.fixedBass, state.bassNote);
+    }
+
+    // Last fallback: ignore CT, just pick by function
+    if (!candidates.length) {
+      const fb = pool.filter(ch => ch.fn === targetFn);
+      const chosen = fb.length ? fb[Math.floor(Math.random() * fb.length)] : pool[Math.floor(Math.random() * pool.length)];
+      result.push(applyBass(chosen));
+      continue;
+    }
+
+    result.push(applyBass(weightedPick(candidates, prev.fn)));
+  }
+
+  state.progression = result;
+  state.activeIdx   = 0;
   renderCircle();
   renderPanel();
   document.getElementById('btn-play').disabled = false;
@@ -829,7 +967,12 @@ function renderPanel() {
   prog.forEach((ch, i) => {
     const pill = document.createElement('div');
     pill.className = 'chord-pill' + (i === state.activeIdx ? ' active' : '');
-    pill.onclick = () => { state.activeIdx = i; renderCircle(); renderPanel(); };
+    pill.onclick = () => {
+      state.activeIdx = i;
+      renderCircle();
+      renderPanel();
+      renderCTBrowser(i);
+    };
 
     const dot = document.createElement('div');
     dot.className = `fn-dot fn-${ch.fn}`;
@@ -860,13 +1003,81 @@ function renderPanel() {
   const ctEl = document.getElementById('ct-info');
   if (prog.length > 1) {
     const totals = [];
-    for (let i = 0; i < prog.length - 1; i++) {
-      totals.push(commonTones(prog[i], prog[i+1]));
-    }
+    for (let i = 0; i < prog.length - 1; i++) totals.push(commonTones(prog[i], prog[i+1]));
     const avg = (totals.reduce((a,b)=>a+b,0) / totals.length).toFixed(1);
-    ctEl.textContent = `Avg common tones: ${avg}  |  Min: ${Math.min(...totals)}  Max: ${Math.max(...totals)}`;
+    ctEl.textContent = `Avg: ${avg} · Min: ${Math.min(...totals)} · Max: ${Math.max(...totals)}`;
   } else {
     ctEl.textContent = '—';
+  }
+
+  // Refresh CT browser for active chord
+  if (state.activeIdx >= 0) renderCTBrowser(state.activeIdx);
+}
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 3 — CT BROWSER
+// ════════════════════════════════════════════════════════════
+
+function renderCTBrowser(chordIdx) {
+  const browser = document.getElementById('ct-browser');
+  browser.innerHTML = '';
+  const pool = state.chordPool;
+  const source = state.progression[chordIdx];
+  if (!source || !pool.length) {
+    browser.innerHTML = '<div style="color:var(--text-dim);font-size:.8rem">No chord selected.</div>';
+    return;
+  }
+
+  const ctMap = commonToneMap(source, pool);
+  const maxCt = Math.max(...Object.keys(ctMap).map(Number));
+
+  if (maxCt < 0) {
+    browser.innerHTML = '<div style="color:var(--text-dim);font-size:.8rem">Pool is empty.</div>';
+    return;
+  }
+
+  // Show groups from highest CT downward, skip 0 unless pool is small
+  const showZero = pool.length <= 6;
+  for (let ct = maxCt; ct >= (showZero ? 0 : 1); ct--) {
+    const group = ctMap[ct];
+    if (!group?.length) continue;
+
+    const hdr = document.createElement('div');
+    hdr.className = 'ct-group-hdr';
+    hdr.textContent = `${ct} shared note${ct !== 1 ? 's' : ''}`;
+    browser.appendChild(hdr);
+
+    group.forEach(ch => {
+      const row = document.createElement('div');
+      row.className = 'ct-candidate';
+
+      const dot = document.createElement('div');
+      dot.className = `fn-dot fn-${ch.fn}`;
+
+      const sym = document.createElement('div');
+      sym.className = 'ct-sym';
+      sym.textContent = ch.symbol;
+
+      const info = document.createElement('div');
+      info.className = 'ct-num';
+      info.textContent = ch.type.replace('quartal4','4th').replace('quintal4','5th');
+
+      row.appendChild(dot);
+      row.appendChild(sym);
+      row.appendChild(info);
+      browser.appendChild(row);
+
+      // Click: insert this chord after the selected position
+      row.onclick = () => {
+        const bass = state.fixedBass
+          ? { ...ch, bass: state.bassNote, pitchClasses: new Set([...ch.pitchClasses, state.bassNote]) }
+          : ch;
+        state.progression.splice(chordIdx + 1, 0, bass);
+        state.activeIdx = chordIdx + 1;
+        renderCircle();
+        renderPanel();
+      };
+    });
   }
 }
 
@@ -889,6 +1100,7 @@ document.getElementById('sel-mode').addEventListener('change', e => {
 });
 
 document.getElementById('sel-vocab').addEventListener('change', e => { state.vocab = e.target.value; renderChordPalette(); });
+document.getElementById('sel-style').addEventListener('change', () => {});
 document.getElementById('sel-ct').addEventListener('change',   e => { state.ctMin = +e.target.value; renderCircle(); renderPanel(); });
 
 document.getElementById('sl-length').addEventListener('input', e => {
