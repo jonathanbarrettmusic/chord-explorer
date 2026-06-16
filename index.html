@@ -1813,8 +1813,8 @@ function exportMIDI() {
   const TPQN        = 480;
   const microsPerBt = Math.round(60_000_000 / state.bpm);
   const ticksPerCh  = Math.round(state.duration * TPQN);
-  const noteTicks   = Math.round(ticksPerCh * 0.88);
-  const gapTicks    = ticksPerCh - noteTicks;
+  const noteTicks   = ticksPerCh;   // full length — note off fires exactly when next note on fires
+  const gapTicks    = 0;            // no gap; DAW instruments sustain into the next chord
 
   const t = [];
 
@@ -1844,8 +1844,8 @@ function exportMIDI() {
     upperMidi.forEach(n => t.push(0x00, 0x80, n, 0));
   });
 
-  // End of track
-  t.push(...varLen(gapTicks), 0xFF, 0x2F, 0x00);
+  // End of track — one-beat tail so DAW doesn't clip the final chord
+  t.push(...varLen(TPQN), 0xFF, 0x2F, 0x00);
 
   // Assemble file: MThd + MTrk
   const header = [
