@@ -950,11 +950,19 @@ function generate() {
     const targetFn = fnSeq[i];
 
     if (i === 0) {
-      // Start on tonic — prefer root-position tonic chord
-      const tonic = pool.find(ch => ch.fn === 'T' && ch.root === state.root)
-                 ?? pool.find(ch => ch.fn === 'T')
-                 ?? pool[0];
-      result.push(applyBass(tonic));
+      let first;
+      if (state.mode === 'chromatic') {
+        // Chromatic/Free: all chords are fn='X' so tonic search always fails.
+        // Pick a random chord type on the key-centre root.
+        const onRoot = pool.filter(ch => ch.root === state.root);
+        first = onRoot[Math.floor(Math.random() * onRoot.length)]
+             ?? pool[Math.floor(Math.random() * pool.length)];
+      } else {
+        first = pool.find(ch => ch.fn === 'T' && ch.root === state.root)
+             ?? pool.find(ch => ch.fn === 'T')
+             ?? pool[0];
+      }
+      result.push(applyBass(first));
       continue;
     }
 
