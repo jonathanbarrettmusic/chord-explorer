@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chord Explorer</title>
+<style>
+/* ── Reset & base ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --surface2:  #21262d;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --text-dim:  #7d8590;
+  --accent:    #58a6ff;
+
+  /* chord function colours */
+  --col-T:   #388bfd;  /* tonic       — blue   */
+  --col-PD:  #d29922;  /* pre-dominant — amber  */
+  --col-D:   #f85149;  /* dominant    — red    */
+  --col-X:   #8957e5;  /* modal/other — purple */
+  --col-none: #30363d;
+
+  --radius: 8px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-rows: 56px 1fr 220px;
+  grid-template-columns: 260px 1fr 280px;
+  grid-template-areas:
+    "header  header  header"
+    "sidebar circle  panel"
+    "footer  footer  footer";
+  height: 100vh;
+  gap: 1px;
+  background: var(--border);
+}
+
+header {
+  grid-area: header;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: .03em;
+}
+
+header .tag {
+  font-size: .72rem;
+  color: var(--text-dim);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 8px;
+}
+
+#sidebar {
+  grid-area: sidebar;
+  background: var(--surface);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#circle-area {
+  grid-area: circle;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+#panel {
+  grid-area: panel;
+  background: var(--surface);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+footer {
+  grid-area: footer;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+}
+
+/* ── Sidebar controls ─────────────────────────────────────────────────── */
+.ctrl-group { display: flex; flex-direction: column; gap: 6px; }
+
+.ctrl-label {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+select, input[type="range"] {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: .9rem;
+  cursor: pointer;
+  outline: none;
+}
+select:focus { border-color: var(--accent); }
+
+input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: .88rem;
+}
+
+.toggle {
+  width: 36px; height: 20px;
+  background: var(--border);
+  border-radius: 10px;
+  position: relative;
+  cursor: pointer;
+  transition: background .2s;
+  flex-shrink: 0;
+  border: none;
+}
+.toggle.on { background: var(--accent); }
+.toggle::after {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  top: 3px; left: 3px;
+  transition: left .2s;
+}
+.toggle.on::after { left: 19px; }
+
+/* ── Right panel: progression ─────────────────────────────────────────── */
+.panel-title {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+#progression-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.chord-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color .15s;
+  user-select: none;
+}
+.chord-pill:hover { border-color: var(--accent); }
+.chord-pill.active { border-color: var(--accent); background: #1f3250; }
+
+.chord-pill .fn-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.fn-T  { background: var(--col-T);  }
+.fn-PD { background: var(--col-PD); }
+.fn-D  { background: var(--col-D);  }
+.fn-X  { background: var(--col-X);  }
+
+.chord-pill .symbol { font-weight: 600; font-size: 1rem; flex: 1; }
+.chord-pill .ct-badge {
+  font-size: .7rem;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ── Footer controls ──────────────────────────────────────────────────── */
+.btn {
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: .88rem;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0d1117; font-weight: 600; }
+.btn.primary:hover { background: #79c0ff; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.tempo-label { font-size: .82rem; color: var(--text-dim); }
+
+/* ── Circle of fifths SVG ─────────────────────────────────────────────── */
+#cof-svg {
+  overflow: visible;
+}
+
+.cof-node {
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.cof-node:hover .node-ring { stroke: var(--accent); stroke-width: 2; }
+
+.cof-arc { fill: none; stroke-width: 2; opacity: .6; pointer-events: none; }
+.cof-ct-dot { pointer-events: none; }
+
+/* common-tone bar legend */
+.ct-legend {
+  display: flex;
+  gap: 12px;
+  font-size: .75rem;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.ct-legend span { display: flex; align-items: center; gap: 4px; }
+.ct-swatch { width: 10px; height: 10px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── HEADER ── -->
+  <header>
+    <h1>Chord Explorer</h1>
+    <span class="tag">Harmony Visualiser</span>
+    <span class="tag" id="key-display">C major</span>
+  </header>
+
+  <!-- ── SIDEBAR ── -->
+  <div id="sidebar">
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Key Centre</div>
+      <select id="sel-root">
+        <option value="0">C</option>
+        <option value="1">C♯ / D♭</option>
+        <option value="2">D</option>
+        <option value="3">D♯ / E♭</option>
+        <option value="4">E</option>
+        <option value="5">F</option>
+        <option value="6">F♯ / G♭</option>
+        <option value="7">G</option>
+        <option value="8">A♭</option>
+        <option value="9">A</option>
+        <option value="10">B♭</option>
+        <option value="11">B</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Mode / Colour</div>
+      <select id="sel-mode">
+        <option value="major">Major (Ionian)</option>
+        <option value="minor">Natural Minor (Aeolian)</option>
+        <option value="dorian">Dorian</option>
+        <option value="phrygian">Phrygian</option>
+        <option value="lydian">Lydian</option>
+        <option value="mixolydian">Mixolydian</option>
+        <option value="melodic_minor">Melodic Minor</option>
+        <option value="lydian_dom">Lydian Dominant</option>
+        <option value="altered">Altered</option>
+        <option value="wholetone">Whole Tone</option>
+        <option value="octatonic">Octatonic / Diminished</option>
+        <option value="chromatic">Chromatic / Free</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Harmonic Vocabulary</div>
+      <select id="sel-vocab">
+        <option value="tonal">Tonal (triads + 7ths)</option>
+        <option value="extended">Extended (9ths, 11ths, 13ths)</option>
+        <option value="quartal">Quartal</option>
+        <option value="quintal">Quintal</option>
+        <option value="mixed">Mixed / Free</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Common Tones (min. shared)</div>
+      <select id="sel-ct">
+        <option value="0">0 — Free (any chord)</option>
+        <option value="1">1 — One thread</option>
+        <option value="2" selected>2 — Smooth / Impressionist</option>
+        <option value="3">3 — Near-static</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Progression Length</div>
+      <input type="range" id="sl-length" min="3" max="8" value="4">
+      <div style="display:flex;justify-content:space-between;font-size:.75rem;color:var(--text-dim)">
+        <span>3</span><span id="length-val">4 chords</span><span>8</span>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Fixed Bass (Pedal)</div>
+      <div class="toggle-row">
+        <button class="toggle" id="tog-bass" onclick="toggleBass()"></button>
+        <span id="bass-label">Off</span>
+      </div>
+      <select id="sel-bass" style="display:none;margin-top:6px">
+        <option value="0">C</option><option value="1">C♯</option>
+        <option value="2">D</option><option value="3">E♭</option>
+        <option value="4">E</option><option value="5">F</option>
+        <option value="6">F♯</option><option value="7">G</option>
+        <option value="8">A♭</option><option value="9">A</option>
+        <option value="10">B♭</option><option value="11">B</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group">
+      <div class="ctrl-label">Chord Duration</div>
+      <select id="sel-dur">
+        <option value="0.5">Eighth note</option>
+        <option value="1">Quarter note</option>
+        <option value="2" selected>Half note</option>
+        <option value="4">Whole note</option>
+      </select>
+    </div>
+
+    <div class="ct-legend">
+      <span><div class="ct-swatch" style="background:var(--col-T)"></div>Tonic</span>
+      <span><div class="ct-swatch" style="background:var(--col-PD)"></div>Pre-dom</span>
+      <span><div class="ct-swatch" style="background:var(--col-D)"></div>Dominant</span>
+      <span><div class="ct-swatch" style="background:var(--col-X)"></div>Modal</span>
+    </div>
+
+  </div><!-- /sidebar -->
+
+  <!-- ── CIRCLE OF FIFTHS ── -->
+  <div id="circle-area">
+    <svg id="cof-svg" width="480" height="480" viewBox="-240 -240 480 480"></svg>
+  </div>
+
+  <!-- ── RIGHT PANEL ── -->
+  <div id="panel">
+    <div class="panel-title">Progression</div>
+    <div id="progression-list">
+      <div style="color:var(--text-dim);font-size:.85rem">
+        Press Generate to build a progression.
+      </div>
+    </div>
+    <div style="margin-top:auto">
+      <div class="panel-title" style="margin-bottom:6px">Common Tones</div>
+      <div id="ct-info" style="font-size:.82rem;color:var(--text-dim)">—</div>
+    </div>
+  </div>
+
+  <!-- ── FOOTER ── -->
+  <footer>
+    <button class="btn primary" onclick="generate()">Generate</button>
+    <button class="btn" id="btn-play" onclick="playProgression()" disabled>▶ Play</button>
+    <button class="btn" onclick="clearProgression()">Clear</button>
+    <div style="flex:1"></div>
+    <span class="tempo-label">BPM</span>
+    <input type="range" id="sl-bpm" min="40" max="160" value="80"
+           style="width:100px" oninput="document.getElementById('bpm-val').textContent=this.value">
+    <span class="tempo-label" id="bpm-val">80</span>
+  </footer>
+
+</div><!-- /app -->
+
+<script>
+'use strict';
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 1 — CHORD DATA MODEL
+// ════════════════════════════════════════════════════════════
+
+const NOTE_NAMES = ['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'];
+
+// Pitch-class intervals for each chord type (relative to root = 0)
+const CHORD_TEMPLATES = {
+  // Triads
+  maj:      [0,4,7],
+  min:      [0,3,7],
+  dim:      [0,3,6],
+  aug:      [0,4,8],
+  sus2:     [0,2,7],
+  sus4:     [0,5,7],
+  // Seventh chords
+  maj7:     [0,4,7,11],
+  dom7:     [0,4,7,10],
+  min7:     [0,3,7,10],
+  hdim7:    [0,3,6,10],  // half-diminished
+  dim7:     [0,3,6,9],
+  minmaj7:  [0,3,7,11],
+  augmaj7:  [0,4,8,11],
+  // Extended
+  dom9:     [0,4,7,10,14],
+  maj9:     [0,4,7,11,14],
+  min9:     [0,3,7,10,14],
+  dom11:    [0,4,7,10,14,17],
+  maj11:    [0,4,7,11,14,17],
+  min11:    [0,3,7,10,14,17],
+  dom13:    [0,4,7,10,14,21],
+  // Quartal (stacked perfect 4ths, 4 voices)
+  quartal4: [0,5,10,15],
+  // Lydian quartal (one augmented 4th)
+  quartalL: [0,5,10,16],
+  // Quintal (stacked perfect 5ths)
+  quintal4: [0,7,14,21],
+  // Polychords represented as combined pitch sets
+  poly_maj_maj: [0,4,7,7,11,14], // two major triads a 5th apart — caller sets root offset
+};
+
+// Human-readable chord symbol suffix
+const CHORD_SUFFIX = {
+  maj:'',       min:'m',       dim:'°',       aug:'+',
+  sus2:'sus2',  sus4:'sus4',
+  maj7:'maj7',  dom7:'7',      min7:'m7',     hdim7:'ø7',
+  dim7:'°7',    minmaj7:'mM7', augmaj7:'+M7',
+  dom9:'9',     maj9:'maj9',   min9:'m9',
+  dom11:'11',   maj11:'maj11', min11:'m11',
+  dom13:'13',
+  quartal4:'(4th)',  quartalL:'(4th/L)', quintal4:'(5th)',
+  poly_maj_maj:'poly',
+};
+
+// Tension weight 0–1 (used for arc colour intensity)
+const CHORD_TENSION = {
+  maj:.1, min:.15, dim:.7, aug:.6, sus2:.2, sus4:.3,
+  maj7:.25, dom7:.55, min7:.3, hdim7:.7, dim7:.8, minmaj7:.4, augmaj7:.65,
+  dom9:.5, maj9:.3, min9:.35, dom11:.45, maj11:.35, min11:.4, dom13:.5,
+  quartal4:.35, quartalL:.4, quintal4:.3, poly_maj_maj:.75,
+};
+
+// Default function label per type (context-adjustable)
+const CHORD_FN_DEFAULT = {
+  maj:'T', min:'T', aug:'D', dim:'D', sus2:'X', sus4:'X',
+  maj7:'T', dom7:'D', min7:'PD', hdim7:'PD', dim7:'D',
+  minmaj7:'T', augmaj7:'T',
+  dom9:'D', maj9:'T', min9:'PD', dom11:'D', maj11:'T', min11:'PD', dom13:'D',
+  quartal4:'X', quartalL:'X', quintal4:'X', poly_maj_maj:'X',
+};
+
+/**
+ * Build a Chord object.
+ * @param {number} root  - pitch class 0-11
+ * @param {string} type  - key in CHORD_TEMPLATES
+ * @param {number|null} bass - fixed bass pc, or null to use root
+ * @param {string|null} fn   - override function label
+ */
+function buildChord(root, type, bass = null, fn = null) {
+  const intervals = CHORD_TEMPLATES[type] || CHORD_TEMPLATES.maj;
+  const pcs = new Set(intervals.map(i => (root + i) % 12));
+  return {
+    root,
+    type,
+    bass: bass !== null ? bass : root,
+    pitchClasses: pcs,
+    tension: CHORD_TENSION[type] ?? 0.3,
+    fn: fn ?? CHORD_FN_DEFAULT[type] ?? 'X',
+    symbol: NOTE_NAMES[root] + (CHORD_SUFFIX[type] ?? ''),
+  };
+}
+
+/** Count common tones between two Chord objects */
+function commonTones(a, b) {
+  let count = 0;
+  a.pitchClasses.forEach(pc => { if (b.pitchClasses.has(pc)) count++; });
+  return count;
+}
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 1 — CIRCLE OF FIFTHS RENDERER
+// ════════════════════════════════════════════════════════════
+
+// Cycle-of-fifths order: C G D A E B F# Db Ab Eb Bb F
+const COF_ORDER = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
+const COF_INDEX = {}; // pc → position on circle
+COF_ORDER.forEach((pc, i) => { COF_INDEX[pc] = i; });
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const COF_R       = 170;  // radius of node centres
+const BASS_R      = 210;  // radius of bass ring
+const NODE_R      = 28;   // node circle radius
+const CT_DOT_R    = 5;    // common-tone dot radius
+
+// App state
+const state = {
+  root:       0,
+  mode:       'major',
+  vocab:      'tonal',
+  ctMin:      2,
+  length:     4,
+  fixedBass:  false,
+  bassNote:   0,
+  duration:   2,
+  bpm:        80,
+  progression: [],  // array of Chord objects
+  activeIdx:  -1,
+};
+
+function cofAngle(pos) {
+  // top = -90°, clockwise
+  return (pos / 12) * 2 * Math.PI - Math.PI / 2;
+}
+
+function cofXY(pos, r) {
+  const a = cofAngle(pos);
+  return { x: Math.cos(a) * r, y: Math.sin(a) * r };
+}
+
+function fnColour(fn) {
+  return { T: 'var(--col-T)', PD: 'var(--col-PD)', D: 'var(--col-D)', X: 'var(--col-X)' }[fn] || 'var(--col-none)';
+}
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function renderCircle() {
+  const svg = document.getElementById('cof-svg');
+  svg.innerHTML = '';
+
+  // ── outer ring for fixed bass ──────────────────────────────
+  if (state.fixedBass) {
+    const bassPos = COF_INDEX[state.bassNote];
+    const bassRing = svgEl('circle', {
+      cx: 0, cy: 0,
+      r: BASS_R,
+      fill: 'none',
+      stroke: 'var(--border)',
+      'stroke-width': 2,
+      'stroke-dasharray': '4 4',
+    });
+    svg.appendChild(bassRing);
+
+    const { x, y } = cofXY(bassPos, BASS_R);
+    const bassDot = svgEl('circle', {
+      cx: x, cy: y, r: 10,
+      fill: 'var(--accent)',
+      opacity: '.8',
+    });
+    svg.appendChild(bassDot);
+
+    const bassLabel = svgEl('text', {
+      x, y: y + 1,
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      fill: '#0d1117',
+      'font-size': '9',
+      'font-weight': '700',
+    });
+    bassLabel.textContent = NOTE_NAMES[state.bassNote];
+    svg.appendChild(bassLabel);
+  }
+
+  // ── progression arcs ───────────────────────────────────────
+  const prog = state.progression;
+  for (let i = 0; i < prog.length - 1; i++) {
+    const a = prog[i], b = prog[i + 1];
+    const posA = COF_INDEX[a.root], posB = COF_INDEX[b.root];
+    const pA = cofXY(posA, COF_R), pB = cofXY(posB, COF_R);
+
+    // Curved arc — control point slightly outside circle
+    const mx = (pA.x + pB.x) / 2, my = (pA.y + pB.y) / 2;
+    const scale = 1.35;
+    const cx = mx * scale, cy = my * scale;
+
+    const arc = svgEl('path', {
+      d: `M ${pA.x} ${pA.y} Q ${cx} ${cy} ${pB.x} ${pB.y}`,
+      fill: 'none',
+      stroke: fnColour(b.fn),
+      'stroke-width': 1.5 + b.tension * 2,
+      opacity: .55,
+      'stroke-dasharray': i === state.activeIdx ? '0' : '4 3',
+    });
+    svg.appendChild(arc);
+
+    // common-tone count badge on arc midpoint
+    const ct = commonTones(a, b);
+    const badge = svgEl('circle', {
+      cx: cx * .85, cy: cy * .85, r: 8,
+      fill: 'var(--surface2)',
+      stroke: 'var(--border)',
+      'stroke-width': 1,
+    });
+    svg.appendChild(badge);
+    const badgeTxt = svgEl('text', {
+      x: cx * .85, y: cy * .85 + 1,
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      fill: ct >= state.ctMin ? 'var(--accent)' : 'var(--text-dim)',
+      'font-size': '8',
+      'font-weight': '600',
+    });
+    badgeTxt.textContent = ct;
+    svg.appendChild(badgeTxt);
+  }
+
+  // ── nodes ──────────────────────────────────────────────────
+  COF_ORDER.forEach((pc, pos) => {
+    const { x, y } = cofXY(pos, COF_R);
+
+    // find if this pc appears in the active chord
+    const activeChord = prog[state.activeIdx];
+    const inActive = activeChord?.pitchClasses.has(pc);
+    const isRoot   = activeChord?.root === pc;
+
+    // find if this pc appears in any progression chord
+    const inProg = prog.some(ch => ch.root === pc);
+    const progChord = prog.find(ch => ch.root === pc);
+
+    const g = svgEl('g', { class: 'cof-node', transform: `translate(${x},${y})` });
+    g.onclick = () => onNodeClick(pc);
+
+    // outer glow for active pitch class
+    if (inActive) {
+      const glow = svgEl('circle', {
+        cx: 0, cy: 0, r: NODE_R + 6,
+        fill: isRoot ? fnColour(activeChord.fn) : 'var(--accent)',
+        opacity: isRoot ? '.25' : '.15',
+      });
+      g.appendChild(glow);
+    }
+
+    // main node ring
+    const ring = svgEl('circle', {
+      cx: 0, cy: 0, r: NODE_R,
+      fill: isRoot
+        ? fnColour(activeChord.fn)
+        : inActive
+          ? 'var(--surface2)'
+          : inProg
+            ? 'var(--surface2)'
+            : 'var(--surface)',
+      stroke: isRoot
+        ? fnColour(activeChord.fn)
+        : inActive
+          ? 'var(--accent)'
+          : inProg
+            ? fnColour(progChord?.fn ?? 'X')
+            : 'var(--border)',
+      'stroke-width': inActive ? 2 : 1,
+      class: 'node-ring',
+    });
+    g.appendChild(ring);
+
+    // note name
+    const label = svgEl('text', {
+      cx: 0, cy: 0, x: 0, y: 1,
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      fill: isRoot ? '#0d1117' : (inActive || inProg) ? 'var(--text)' : 'var(--text-dim)',
+      'font-size': '11',
+      'font-weight': isRoot ? '700' : '500',
+    });
+    label.textContent = NOTE_NAMES[pc];
+    g.appendChild(label);
+
+    // common-tone dots — small circles on rim for each pc in active chord
+    if (inActive && !isRoot) {
+      const dot = svgEl('circle', {
+        cx: 0, cy: -NODE_R - 5, r: CT_DOT_R,
+        fill: 'var(--accent)',
+        class: 'cof-ct-dot',
+      });
+      g.appendChild(dot);
+    }
+
+    svg.appendChild(g);
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 1 — UI BINDINGS & STUB FUNCTIONS
+// ════════════════════════════════════════════════════════════
+
+function onNodeClick(pc) {
+  // Will be fleshed out in Module 3 — for now, highlight the node
+  state.activeIdx = state.progression.findIndex(ch => ch.root === pc);
+  renderCircle();
+  renderPanel();
+}
+
+function generate() {
+  // Stub — Module 3 will implement this
+  // For now, build a sample I–IV–V–I in the chosen key for testing
+  const r = state.root;
+  state.progression = [
+    buildChord(r,          'maj',  state.fixedBass ? state.bassNote : null, 'T'),
+    buildChord((r + 5) % 12, 'maj',  state.fixedBass ? state.bassNote : null, 'PD'),
+    buildChord((r + 7) % 12, 'dom7', state.fixedBass ? state.bassNote : null, 'D'),
+    buildChord(r,          'maj',  state.fixedBass ? state.bassNote : null, 'T'),
+  ];
+  state.activeIdx = 0;
+  renderCircle();
+  renderPanel();
+  document.getElementById('btn-play').disabled = false;
+}
+
+function clearProgression() {
+  state.progression = [];
+  state.activeIdx = -1;
+  renderCircle();
+  document.getElementById('progression-list').innerHTML =
+    '<div style="color:var(--text-dim);font-size:.85rem">Press Generate to build a progression.</div>';
+  document.getElementById('ct-info').textContent = '—';
+  document.getElementById('btn-play').disabled = true;
+}
+
+function playProgression() {
+  // Stub — Module 4 will implement Tone.js playback
+  alert('Playback coming in Module 4.');
+}
+
+function toggleBass() {
+  const tog = document.getElementById('tog-bass');
+  const lbl = document.getElementById('bass-label');
+  const sel = document.getElementById('sel-bass');
+  state.fixedBass = !state.fixedBass;
+  tog.classList.toggle('on', state.fixedBass);
+  lbl.textContent = state.fixedBass ? 'On' : 'Off';
+  sel.style.display = state.fixedBass ? '' : 'none';
+  renderCircle();
+}
+
+function renderPanel() {
+  const list = document.getElementById('progression-list');
+  list.innerHTML = '';
+  const prog = state.progression;
+
+  if (!prog.length) {
+    list.innerHTML = '<div style="color:var(--text-dim);font-size:.85rem">Press Generate to build a progression.</div>';
+    return;
+  }
+
+  prog.forEach((ch, i) => {
+    const pill = document.createElement('div');
+    pill.className = 'chord-pill' + (i === state.activeIdx ? ' active' : '');
+    pill.onclick = () => { state.activeIdx = i; renderCircle(); renderPanel(); };
+
+    const dot = document.createElement('div');
+    dot.className = `fn-dot fn-${ch.fn}`;
+
+    const sym = document.createElement('div');
+    sym.className = 'symbol';
+    sym.textContent = ch.symbol;
+    if (state.fixedBass && ch.bass !== ch.root) {
+      sym.textContent += '/' + NOTE_NAMES[ch.bass];
+    }
+
+    pill.appendChild(dot);
+    pill.appendChild(sym);
+
+    // common tones with next chord
+    if (i < prog.length - 1) {
+      const ct = commonTones(ch, prog[i + 1]);
+      const badge = document.createElement('div');
+      badge.className = 'ct-badge';
+      badge.textContent = `→ ${ct}ct`;
+      pill.appendChild(badge);
+    }
+
+    list.appendChild(pill);
+  });
+
+  // CT summary
+  const ctEl = document.getElementById('ct-info');
+  if (prog.length > 1) {
+    const totals = [];
+    for (let i = 0; i < prog.length - 1; i++) {
+      totals.push(commonTones(prog[i], prog[i+1]));
+    }
+    const avg = (totals.reduce((a,b)=>a+b,0) / totals.length).toFixed(1);
+    ctEl.textContent = `Avg common tones: ${avg}  |  Min: ${Math.min(...totals)}  Max: ${Math.max(...totals)}`;
+  } else {
+    ctEl.textContent = '—';
+  }
+}
+
+// ── Wire up controls ───────────────────────────────────────
+document.getElementById('sel-root').addEventListener('change', e => {
+  state.root = +e.target.value;
+  state.bassNote = state.root;
+  document.getElementById('sel-bass').value = state.root;
+  document.getElementById('key-display').textContent =
+    NOTE_NAMES[state.root] + ' ' + document.getElementById('sel-mode').options[document.getElementById('sel-mode').selectedIndex].text.split(' ')[0];
+  renderCircle();
+});
+
+document.getElementById('sel-mode').addEventListener('change', e => {
+  state.mode = e.target.value;
+  document.getElementById('key-display').textContent =
+    NOTE_NAMES[state.root] + ' ' + e.target.options[e.target.selectedIndex].text.split(' ')[0];
+  renderCircle();
+});
+
+document.getElementById('sel-vocab').addEventListener('change', e => { state.vocab = e.target.value; });
+document.getElementById('sel-ct').addEventListener('change',   e => { state.ctMin = +e.target.value; renderCircle(); renderPanel(); });
+
+document.getElementById('sl-length').addEventListener('input', e => {
+  state.length = +e.target.value;
+  document.getElementById('length-val').textContent = e.target.value + ' chords';
+});
+
+document.getElementById('sel-bass').addEventListener('change', e => {
+  state.bassNote = +e.target.value;
+  renderCircle();
+});
+
+document.getElementById('sel-dur').addEventListener('change', e => { state.duration = +e.target.value; });
+document.getElementById('sl-bpm').addEventListener('input',   e => { state.bpm = +e.target.value; });
+
+// ── Initial render ──────────────────────────────────────────
+renderCircle();
+</script>
+</body>
+</html>
