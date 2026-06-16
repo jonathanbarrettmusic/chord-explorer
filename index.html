@@ -281,6 +281,55 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
 
 @keyframes pulse { from { opacity: 1; } to { opacity: .25; } }
 
+/* ── Chord delete button ──────────────────────────────────────────────── */
+.del-btn {
+  background: none; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: .85rem; padding: 0 2px; line-height: 1;
+  transition: color .12s;
+}
+.del-btn:hover { color: var(--col-D); }
+
+/* ── Chord info box ───────────────────────────────────────────────────── */
+#chord-info-box {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: .8rem;
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+#chord-info-box .ci-symbol { font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; }
+#chord-info-box .ci-notes  { color: var(--accent); letter-spacing: .04em; }
+#chord-info-box .ci-meta   { color: var(--text-dim); margin-top: 2px; }
+
+/* tension bar */
+.tension-bar-wrap { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.tension-bar-track {
+  flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.tension-bar-fill { height: 100%; border-radius: 2px; transition: width .3s; }
+
+/* ── Mobile layout ────────────────────────────────────────────────────── */
+@media (max-width: 800px) {
+  #app {
+    grid-template-rows: 48px auto 340px auto 180px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "sidebar"
+      "circle"
+      "panel"
+      "footer";
+    height: auto; min-height: 100vh;
+  }
+  #sidebar { max-height: 280px; flex-direction: row; flex-wrap: wrap; gap: 10px; }
+  #sidebar .ctrl-group { flex: 1 1 160px; }
+  #cof-svg { width: 320px; height: 320px; }
+  #panel { max-height: 400px; }
+  footer  { flex-wrap: wrap; gap: 8px; padding: 10px 16px; }
+}
+
 /* ── Circle of fifths SVG ─────────────────────────────────────────────── */
 #cof-svg {
   overflow: visible;
@@ -475,6 +524,7 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
       </div>
     </div>
     <div style="margin-top:auto;border-top:1px solid var(--border);padding-top:10px">
+      <div id="chord-info-box" style="display:none"></div>
       <div class="panel-title" style="margin-bottom:4px">CT Summary</div>
       <div id="ct-info" style="font-size:.78rem;color:var(--text-dim);margin-bottom:10px">—</div>
       <div class="panel-title" style="margin-bottom:6px">Next Chord Candidates</div>
@@ -487,6 +537,8 @@ input[type="range"] { padding: 4px 0; accent-color: var(--accent); }
     <button class="btn primary" onclick="generate()">Generate</button>
     <button class="btn" id="btn-play" onclick="playProgression()" disabled>▶ Play</button>
     <button class="btn" onclick="clearProgression()">Clear</button>
+    <button class="btn" id="btn-copy" onclick="copyProgression()" title="Copy chord symbols">Copy</button>
+    <button class="btn" id="btn-analysis" onclick="copyAnalysis()" title="Copy Roman numeral analysis">Analysis</button>
     <div style="flex:1"></div>
     <span class="tempo-label">BPM</span>
     <input type="range" id="sl-bpm" min="40" max="160" value="80"
@@ -1512,6 +1564,218 @@ async function playProgression() {
   const totalMs = (startTime - Tone.now() + prog.length * chordDurSec) * 1000 + 200;
   state.playTimers.push(setTimeout(stopPlayback, totalMs));
 }
+
+// ════════════════════════════════════════════════════════════
+//  MODULE 5 — POLISH, EXPORT, WIRING
+// ════════════════════════════════════════════════════════════
+
+// ── Chord info display ────────────────────────────────────
+function renderChordInfo(chord) {
+  const box = document.getElementById('chord-info-box');
+  if (!chord) { box.style.display = 'none'; return; }
+
+  const noteNames = [...chord.pitchClasses]
+    .map(pc => ({ pc, diff: (pc - chord.root + 12) % 12 }))
+    .sort((a, b) => a.diff - b.diff)
+    .map(x => NOTE_NAMES[x.pc]);
+
+  const fnLabels = { T:'Tonic', PD:'Pre-Dominant', D:'Dominant', X:'Modal' };
+  const tensionPct = Math.round(chord.tension * 100);
+  const tensionCol = chord.tension < 0.35 ? 'var(--col-T)'
+                   : chord.tension < 0.6  ? 'var(--col-PD)'
+                   : 'var(--col-D)';
+
+  let bassLine = '';
+  if (state.fixedBass && chord.bass !== chord.root) {
+    bassLine = `<div class="ci-meta">Bass: ${NOTE_NAMES[chord.bass]}</div>`;
+  }
+
+  box.style.display = '';
+  box.innerHTML = `
+    <div class="ci-symbol">${chord.symbol}</div>
+    <div class="ci-notes">${noteNames.join(' · ')}</div>
+    <div class="ci-meta">${fnLabels[chord.fn] ?? chord.fn} · type: ${chord.type}</div>
+    ${bassLine}
+    <div class="tension-bar-wrap">
+      <span style="font-size:.7rem;color:var(--text-dim)">Tension</span>
+      <div class="tension-bar-track">
+        <div class="tension-bar-fill"
+             style="width:${tensionPct}%;background:${tensionCol}"></div>
+      </div>
+      <span style="font-size:.7rem;color:var(--text-dim)">${tensionPct}%</span>
+    </div>`;
+}
+
+// ── Delete a chord from the progression ──────────────────
+function deleteChord(i, e) {
+  e.stopPropagation(); // don't also select the pill
+  state.progression.splice(i, 1);
+  if (state.activeIdx >= state.progression.length) {
+    state.activeIdx = state.progression.length - 1;
+  }
+  renderCircle();
+  renderPanel();
+  if (!state.progression.length) {
+    document.getElementById('btn-play').disabled = true;
+    document.getElementById('chord-info-box').style.display = 'none';
+    document.getElementById('ct-browser').innerHTML =
+      '<div style="color:var(--text-dim);font-size:.8rem">Select a chord above.</div>';
+  }
+}
+
+// Patch renderPanel to add delete buttons and chord info ──
+const _renderPanelOrig = renderPanel;
+renderPanel = function() {
+  _renderPanelOrig();
+  // Add × buttons to each pill
+  document.querySelectorAll('.chord-pill').forEach((pill, i) => {
+    const x = document.createElement('button');
+    x.className = 'del-btn';
+    x.textContent = '×';
+    x.title = 'Remove chord';
+    x.onclick = (e) => deleteChord(i, e);
+    pill.appendChild(x);
+  });
+  // Render chord info for active chord
+  renderChordInfo(state.progression[state.activeIdx] ?? null);
+};
+
+// ── Improved node click ───────────────────────────────────
+onNodeClick = function(pc) {
+  // If a chord is active in the progression, filter CT browser to this root
+  if (state.activeIdx >= 0 && state.chordPool.length) {
+    const source = state.progression[state.activeIdx];
+    if (source) {
+      // Show CT candidates whose root = clicked pc
+      const browser = document.getElementById('ct-browser');
+      browser.innerHTML = '';
+
+      const matches = state.chordPool.filter(ch => ch.root === pc);
+      if (!matches.length) {
+        browser.innerHTML = `<div style="color:var(--text-dim);font-size:.8rem">
+          No chords on ${NOTE_NAMES[pc]} in this pool.</div>`;
+        return;
+      }
+
+      const hdr = document.createElement('div');
+      hdr.className = 'ct-group-hdr';
+      hdr.textContent = `Chords on ${NOTE_NAMES[pc]}`;
+      browser.appendChild(hdr);
+
+      matches.forEach(ch => {
+        const ct = commonTones(source, ch);
+        const row = document.createElement('div');
+        row.className = 'ct-candidate';
+
+        const dot = document.createElement('div');
+        dot.className = `fn-dot fn-${ch.fn}`;
+
+        const sym = document.createElement('div');
+        sym.className = 'ct-sym';
+        sym.textContent = ch.symbol;
+
+        const info = document.createElement('div');
+        info.className = 'ct-num';
+        info.textContent = `${ct}ct · ${ch.type}`;
+
+        row.appendChild(dot); row.appendChild(sym); row.appendChild(info);
+        browser.appendChild(row);
+
+        row.onclick = () => {
+          const chord = state.fixedBass
+            ? { ...ch, bass: state.bassNote, pitchClasses: new Set([...ch.pitchClasses, state.bassNote]) }
+            : ch;
+          state.progression.splice(state.activeIdx + 1, 0, chord);
+          state.activeIdx += 1;
+          renderCircle(); renderPanel();
+        };
+      });
+      return;
+    }
+  }
+
+  // Fallback: select matching chord in progression or just highlight
+  const idx = state.progression.findIndex(ch => ch.root === pc);
+  if (idx >= 0) { state.activeIdx = idx; renderCircle(); renderPanel(); }
+};
+
+// ── Generate: always refresh pool first ──────────────────
+const _generateOrig = generate;
+generate = function() {
+  state.chordPool = generateChordPool(state.root, state.mode, state.vocab);
+  _generateOrig();
+};
+
+// ── clearProgression: also reset info panels ─────────────
+const _clearOrig = clearProgression;
+clearProgression = function() {
+  _clearOrig();
+  document.getElementById('chord-info-box').style.display = 'none';
+  document.getElementById('ct-browser').innerHTML =
+    '<div style="color:var(--text-dim);font-size:.8rem">Select a chord above.</div>';
+};
+
+// ── Export: copy chord symbols ────────────────────────────
+function copyProgression() {
+  if (!state.progression.length) return;
+  const text = state.progression.map(ch => {
+    let s = ch.symbol;
+    if (state.fixedBass && ch.bass !== ch.root) s += '/' + NOTE_NAMES[ch.bass];
+    return s;
+  }).join('  –  ');
+
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('btn-copy');
+    btn.textContent = '✓ Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
+  }).catch(() => prompt('Copy this:', text));
+}
+
+// ── Export: Roman numeral analysis ───────────────────────
+function copyAnalysis() {
+  if (!state.progression.length) return;
+  const scalePCs  = getScalePCs(state.root, state.mode);
+  const fnLabels  = { T:'Tonic', PD:'Pre-Dominant', D:'Dominant', X:'Modal' };
+  const keyName   = NOTE_NAMES[state.root] + ' ' + state.mode.replace('_',' ');
+
+  const header = `Chord Analysis — ${keyName}\n${'─'.repeat(44)}`;
+  const lines  = state.progression.map((ch, i) => {
+    const degIdx = scalePCs.indexOf(ch.root);
+    const roman  = degIdx >= 0 ? ROMAN[degIdx] : '?';
+    const fnLbl  = fnLabels[ch.fn] ?? ch.fn;
+    const pcs    = [...ch.pitchClasses]
+      .map(pc => ({ pc, diff:(pc - ch.root + 12) % 12 }))
+      .sort((a,b) => a.diff - b.diff)
+      .map(x => NOTE_NAMES[x.pc]).join(', ');
+    const bassStr = (state.fixedBass && ch.bass !== ch.root)
+      ? `  bass: ${NOTE_NAMES[ch.bass]}` : '';
+    return `${i+1}. ${ch.symbol.padEnd(10)} ${roman.padEnd(5)}  ${fnLbl.padEnd(14)}  [${pcs}]${bassStr}`;
+  });
+
+  const avg = state.progression.length > 1
+    ? (() => {
+        const tots = [];
+        for (let i = 0; i < state.progression.length - 1; i++)
+          tots.push(commonTones(state.progression[i], state.progression[i+1]));
+        return (tots.reduce((a,b)=>a+b,0)/tots.length).toFixed(1);
+      })()
+    : '—';
+
+  const footer = `\nAvg common tones: ${avg}  |  CT threshold: ${state.ctMin}`;
+  const full   = [header, ...lines, footer].join('\n');
+
+  navigator.clipboard.writeText(full).then(() => {
+    const btn = document.getElementById('btn-analysis');
+    btn.textContent = '✓ Copied';
+    setTimeout(() => { btn.textContent = 'Analysis'; }, 1600);
+  }).catch(() => prompt('Copy this:', full));
+}
+
+// ── Patch sel-root change to keep bass in sync ────────────
+document.getElementById('sel-root').addEventListener('change', () => {
+  renderChordPalette();
+  renderChordInfo(state.progression[state.activeIdx] ?? null);
+});
 </script>
 </body>
 </html>
