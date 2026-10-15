@@ -1239,35 +1239,40 @@ function getScalePCs(root, mode) {
   return intervals.map(i => (root + i) % 12);
 }
 
-// ── Quartal chord builder ──────────────────────────────────
-// Stacks 4ths from the scale — uses scale PCs only for a "modal" quality
-function buildQuartalChords(root, mode) {
-  const scalePCs = getScalePCs(root, mode);
-  const chords = [];
-  scalePCs.forEach((pc, i) => {
-    // Stack 3 4ths from this scale degree
-    const voices = [pc];
-    for (let step = 1; step <= 3; step++) {
-      // Walk up the scale by 3 half-steps × step (perfect 4th = 5 semitones)
-      let next = voices[voices.length - 1];
-      // Find the pitch ~5 semitones above that also sits in the scale
-      const target = (next + 5) % 12;
-      const inScale = scalePCs.includes(target);
-      const alt     = scalePCs.includes((next + 6) % 12); // tritone sub (Lydian 4th)
-      if (inScale) voices.push(target);
-      else if (alt) voices.push((next + 6) % 12);
-      else         voices.push(target); // force it
-    }
-    const type = voices[3] === (pc + 16) % 12 ? 'quartalL' : 'quartal4';
-    chords.push(buildChord(pc, type, null, 'X'));
-  });
-  return chords;
+// ── Quartal and quintal chord builders ─────────────────────
+// Stack 4ths (or 5ths) from each scale degree using the scale's own notes: a perfect interval where the scale has one,
+// otherwise the augmented 4th (or diminished 5th) it does have. The chord keeps its stack (semitones above the root, in
+// order) so playback voices it open, as stacked.
+function stackFromScale(pc, scalePCs, perfect, other) {
+  const stack = [0];
+  for (let step = 1; step <= 3; step++) {
+    const prev = (pc + stack[stack.length - 1]) % 12;
+    const size = scalePCs.includes((prev + perfect) % 12) ? perfect
+               : scalePCs.includes((prev + other) % 12)   ? other
+               : perfect; // neither in the scale (e.g. chromatic gaps): force the perfect interval
+    stack.push(stack[stack.length - 1] + size);
+  }
+  return stack;
 }
 
-// ── Quintal chord builder ──────────────────────────────────
+function stackedChord(pc, type, stack) {
+  const chord = buildChord(pc, type, null, 'X');
+  chord.pitchClasses = new Set(stack.map(i => (pc + i) % 12));
+  chord.stack = stack;
+  return chord;
+}
+
+function buildQuartalChords(root, mode) {
+  const scalePCs = getScalePCs(root, mode);
+  return scalePCs.map(pc => {
+    const stack = stackFromScale(pc, scalePCs, 5, 6);
+    return stackedChord(pc, stack.some((s, i) => i && s - stack[i - 1] === 6) ? 'quartalL' : 'quartal4', stack);
+  });
+}
+
 function buildQuintalChords(root, mode) {
   const scalePCs = getScalePCs(root, mode);
-  return scalePCs.map(pc => buildChord(pc, 'quintal4', null, 'X'));
+  return scalePCs.map(pc => stackedChord(pc, 'quintal4', stackFromScale(pc, scalePCs, 7, 6)));
 }
 
 // ── Extended (9th/11th/13th) chord builder ─────────────────
@@ -1475,7 +1480,7 @@ function initSynths() {
     oscillator: { type: 'triangle' },
     envelope:   { attack: 0.06, decay: 0.4, sustain: 0.55, release: 1.2 },
   }).toDestination();
-  upperSynth.volume.value = -10;
+  upperSynth.volume.value = -18;
 
   // Warmer bass voice
   bassSynth = new Tone.Synth({
@@ -1483,15 +1488,28 @@ function initSynths() {
     envelope:   { attack: 0.08, decay: 0.5, sustain: 0.65, release: 1.4 },
     filterEnvelope: undefined,
   }).toDestination();
-  bassSynth.volume.value = -6;
+  bassSynth.volume.value = -14;
 }
 
+// Quartal and quintal chords keep their open stack of 4ths or 5ths, starting between F3 and E4 (quartal) or in octave 3
+// (quintal, which spans almost two octaves).
+const OPEN_VOICING_TYPES = new Set(['quartal4', 'quartalL', 'quintal4']);
+
 /**
- * Voice a chord in close position starting at octave 4.
+ * Voice a chord in close position starting at octave 4 (quartal and quintal chords: open, as stacked).
  * Returns array of Tone.js note strings e.g. ['C4','E4','G4'].
  */
 function voiceChord(chord) {
   const root = chord.root;
+
+  if (OPEN_VOICING_TYPES.has(chord.type)) {
+    const octave = chord.type === 'quintal4' ? 3 : root >= 5 ? 3 : 4;
+    const base = (octave + 1) * 12 + root;
+    return (chord.stack ?? CHORD_TEMPLATES[chord.type]).map(i => {
+      const midi = base + i;
+      return PC_SHARP[midi % 12] + (Math.floor(midi / 12) - 1);
+    });
+  }
 
   // Sort pitch classes ascending from root (wrap-around)
   const sorted = [...chord.pitchClasses]
